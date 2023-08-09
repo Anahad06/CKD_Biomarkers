@@ -1,9 +1,9 @@
-# Removes 'e'
 options(scipen = 999)
 
 library(GEOquery)
 library(preprocessCore)
 library(sva)
+library(randomForest)  # Add the randomForest package
 
 # Get DataSet from GEO Database
 gse <- getGEO("GSE66494", GSEMatrix = TRUE)
@@ -13,14 +13,14 @@ gseData <- pData(gse[[1]])
 
 # creating labels for the train dataset 
 statustrain <- c(
-  rep("CKD", 47),
-  rep("N", 5)
+  rep(1, 47),
+  rep(0, 5)
 )
 
 # creating labels for the test dataset
 statustest <- c(
-  rep("CKD", 5),
-  rep("N", 3)
+  rep(1, 5),
+  rep(0, 3)
 )
 
 # Import Dataset and Save
@@ -56,25 +56,27 @@ colnames(Train_normalized_log2) <- paste(colnames(Train_normalized_log2), status
 # Add disease status as row names for the Test_normalized_log2 dataset
 colnames(Test_normalized_log2) <- paste(colnames(Test_normalized_log2), statustest, sep = "")
 
-# shuffles the dataset 
+# num of columns 
+num_samples <- ncol(Train_normalized_log2)
+nSamplesTest <- ncol(Test_normalized_log2)
+
+# creating batches 
+batch_indicator_train <- factor(rep(c("Batch1", "Batch2"), each = num_samples / 2))
+batch_indicator_test <- factor(rep(c("Batch1Test", "Batch2test"), each = nSamplesTest / 2))
+
 set.seed(123)  # For reproducibility
-random_order_train <- sample(1:ncol(Train_normalized_log2))
-Train_normalized_log2_randomized <- Train_normalized_log2[, random_order_train]
-
-# randomizing the train labels with the dataset (future use)
-status_Trainshuffled = statustrain[random_order_train]
-
-# shuffles the dataset (column)
-set.seed(456)  # For reproducibility
-random_order_test <- sample(1:ncol(Test_normalized_log2))
-Test_normalized_log2_randomized <- Test_normalized_log2[, random_order_test]
+random_order <- sample(1:num_samples)
+randomTest <- sample(1:nSamplesTest)
+batch_indicator_train <- batch_indicator_train[random_order]
+batch_indicator_test <- batch_indicator_test[randomTest] 
 
 # randomizing the test labels with the dataset (future use)
-status_Testshuffled = statustest[random_order_test]
+status_Testshuffled = statustest[randomTest]
 
-# comparing
-View(Train_normalized_log2)
-View(Train_normalized_log2_randomized)
-print(status_Trainshuffled)
+# randomizing the train labels with the dataset (future use)
+status_Trainshuffled = statustrain[random_order]
 
+# Perform ComBat on the train and test datasets separately
+corrected_train <- ComBat(dat = Train_normalized_log2[, random_order], batch = batch_indicator_train)
+corrected_test <- ComBat(dat = Test_normalized_log2[, randomTest], batch = batch_indicator_test)
 
