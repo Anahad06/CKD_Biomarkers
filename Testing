@@ -1,0 +1,108 @@
+options(scipen = 999)
+
+library(GEOquery)
+library(preprocessCore)
+library(sva)
+library(randomForest)  # Add the randomForest package
+library(pheatmap)
+library(ggplot2)
+library(limma)
+
+# Get DataSet from GEO Database
+gse <- getGEO("GSE66494", GSEMatrix = TRUE)
+
+# Get the Labels (possible future use)
+gseData <- pData(gse[[1]])
+
+# creating labels for the train dataset 
+statustrain <- c(
+  rep(1, 47),
+  rep(0, 5)
+)
+
+# creating labels for the test dataset
+statustest <- c(
+  rep(1, 5),
+  rep(0, 3)
+)
+
+# Import Dataset and Save
+Expr_GSM1623299 <- exprs(gse[[1]])
+
+# Set column names for Train, Control, and Test datasets
+sample_names <- colnames(Expr_GSM1623299)
+Train_cols <- sample_names[2:53]
+Test_cols <- sample_names[54:ncol(Expr_GSM1623299)]
+
+# Splice Data
+Train <- Expr_GSM1623299[, Train_cols, drop = FALSE]
+Test <- Expr_GSM1623299[, Test_cols, drop = FALSE]
+
+# Normalize Data
+Train_normalized <- normalize.quantiles(Train)
+Test_normalized <- normalize.quantiles(Test)
+
+# Set the row and column names for the normalized data
+rownames(Train_normalized) <- rownames(Train)
+colnames(Train_normalized) <- colnames(Train)
+
+rownames(Test_normalized) <- rownames(Test)
+colnames(Test_normalized) <- colnames(Test)
+
+# Log2 transform the normalized data
+Train_normalized_log2 <- log2(Train_normalized)
+Test_normalized_log2 <- log2(Test_normalized)
+
+# Add disease status as row names for the Train_normalized_log2 dataset
+colnames(Train_normalized_log2) <- paste(colnames(Train_normalized_log2), statustrain, sep = "")
+
+# Add disease status as row names for the Test_normalized_log2 dataset
+colnames(Test_normalized_log2) <- paste(colnames(Test_normalized_log2), statustest, sep = "")
+
+# num of columns 
+num_samples <- ncol(Train_normalized_log2)
+nSamplesTest <- ncol(Test_normalized_log2)
+
+# creating batches 
+batch_indicator_train <- factor(rep(c("Batch1", "Batch2"), each = num_samples / 2))
+batch_indicator_test <- factor(rep(c("Batch1Test", "Batch2test"), each = nSamplesTest / 2))
+
+set.seed(123)  # For reproducibility
+random_order <- sample(1:num_samples)
+randomTest <- sample(1:nSamplesTest)
+batch_indicator_train <- batch_indicator_train[random_order]
+batch_indicator_test <- batch_indicator_test[randomTest] 
+
+# randomizing the test labels with the dataset (future use)
+status_Testshuffled = statustest[randomTest]
+
+# randomizing the train labels with the dataset (future use)
+status_Trainshuffled = statustrain[random_order]
+
+# Perform ComBat on the train and test datasets separately
+corrected_train <- ComBat(dat = Train_normalized_log2[, random_order], batch = batch_indicator_train)
+corrected_test <- ComBat(dat = Test_normalized_log2[, randomTest], batch = batch_indicator_test)
+
+#---------------------
+
+# Create a design matrix for differential expression analysis
+design_matrix <- model.matrix(~ batch_indicator_train)
+
+# Fit a linear model to the corrected training data
+fit <- lmFit(corrected_train, design_matrix)
+
+# Perform empirical Bayes moderation of the standard errors
+fit <- eBayes(fit)
+
+# Define your cutoffs for FDR and fold change
+fdr_cutoff <- 0.05
+fold_change_cutoff <- 1
+
+# Identify differentially expressed genes
+de_genes <- decideTests(fit, method = "separate", adjust.method = "BH")
+de_genes_indices <- which(de_genes[, "Batch2"] == "D" & abs(fit$coefficients[,"Batch2"]) > log2(fold_change_cutoff))
+
+# Get the differentially expressed genes
+de_genes_expression <- corrected_train[de_genes_indices, ]
+
+print(de_genes_expression)
